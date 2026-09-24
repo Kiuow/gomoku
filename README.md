@@ -57,4 +57,4 @@ npm run deploy
 
 ## 来源与许可
 
-本项目包含第三方 Rapfi 引擎文件。Rapfi 上游使用 GPLv3，详见 [Rapfi 来源说明](client/public/rapfi/NOTICE.md)和随附的 [GPLv3 正文](client/public/rapfi/COPYING.txt)。当前仓库没有为应用其余源码声明统一许可证；公开再分发前，应确认下载来源、原作者权益及 Rapfi 构建产物对应的源码。
+本项目包含第三方 Rapfi 引擎文件。Rapfi 上游使用 GPLv3，详见 [Rapfi 来源说明](client/public/rapfi/NOTICE.md)和随附的 [GPLv3 正文](client/public/rapfi/COPYING.txt)。
