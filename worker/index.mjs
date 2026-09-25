@@ -55,6 +55,8 @@ function rewind(room, count) {
   room.undoRequestBy = null; room.undoRequestStatus = null;
 }
 
+const undoCount = (room, requesterColor) => room.currentPlayer === requesterColor ? 2 : 1;
+
 function roomShape(code, blackPlayer, whitePlayer, difficulty = null) {
   return {
     id: id(), roomCode: code, board: emptyBoard(), currentPlayer: 'black',
@@ -208,7 +210,8 @@ export class GomokuRooms {
       if (isSolo(room) && room.status === 'playing' && room.aiPendingSince && Date.now() - room.aiPendingSince > 12000) {
         const color = room.currentPlayer;
         if (isAi(color === 'black' ? room.blackPlayer : room.whitePlayer)) {
-          const move = choose(room.board, color, room.aiDifficulty || 'hard', room.moveHistory);
+          const fallbackDifficulty = room.aiDifficulty === 'hell' || room.aiDifficulty === 'godlike' ? 'hard' : room.aiDifficulty === 'hard' ? 'normal' : room.aiDifficulty;
+          const move = choose(room.board, color, fallbackDifficulty || 'hard', room.moveHistory);
           if (move) play(room, color, move.row, move.col);
           room.aiPendingSince = null;
           await this.save(room);
@@ -290,6 +293,9 @@ export class GomokuRooms {
       if (!isSolo(room) || room.status !== 'playing') return { room, valid: false, message: '游戏已结束' };
       const color = room.currentPlayer;
       if (!isAi(color === 'black' ? room.blackPlayer : room.whitePlayer)) return { room, valid: false, message: '当前不是 AI 回合' };
+      if (!room.aiPendingSince || room.aiPendingSince !== data.expectedPendingSince || room.moveCount !== data.expectedMoveCount) {
+        return { room, valid: false, message: 'AI 回合已更新' };
+      }
       const fallbackDifficulty = room.aiDifficulty === 'hell' || room.aiDifficulty === 'godlike' ? 'hard' : room.aiDifficulty === 'hard' ? 'normal' : room.aiDifficulty;
       const chosen = room.board[data.row]?.[data.col] === null ? { row: data.row, col: data.col } : choose(room.board, color, fallbackDifficulty || 'hard', room.moveHistory);
       if (!chosen) return { room, valid: false, message: '棋盘已满' };
@@ -307,11 +313,14 @@ export class GomokuRooms {
       if (!move) return { room, valid: false, message: '棋盘已满' };
       play(room, color, move.row, move.col);
       if (path.includes('/solo/') && room.status === 'playing') {
-        const aiMove = choose(room.board, room.currentPlayer, room.aiDifficulty || 'hard', room.moveHistory);
-        if (aiMove) play(room, room.currentPlayer, aiMove.row, aiMove.col);
+        if (data.deferAi) room.aiPendingSince = Date.now();
+        else {
+          const aiMove = choose(room.board, room.currentPlayer, room.aiDifficulty || 'hard', room.moveHistory);
+          if (aiMove) play(room, room.currentPlayer, aiMove.row, aiMove.col);
+        }
       }
       await this.save(room);
-      return { room, valid: true, opponentAnalysis: null };
+      return { room, valid: true, aiThinking: !!room.aiPendingSince, opponentAnalysis: null };
     }
 
     if (path === '/api/gomoku/rooms/ai-hint' || path === '/api/gomoku/solo/ai-hint') {
@@ -371,11 +380,12 @@ export class GomokuRooms {
     if (path === '/api/gomoku/solo/restart') {
       const room = await load(data.roomCode);
       requirePlayer(room, data.playerId);
+      const previousPendingSince = room.aiPendingSince || 0;
       room.board = emptyBoard(); room.currentPlayer = 'black'; room.status = isSolo(room) || room.blackPlayer && room.whitePlayer ? 'playing' : 'waiting';
       room.winner = null; room.winningLine = null; room.lastMove = null; room.moveCount = 0; room.moveHistory = [];
       room.undoRequestBy = null; room.undoRequestStatus = null; room.aiPendingSince = null;
       if (isSolo(room) && isAi(room.blackPlayer)) {
-        if (data.deferAi) room.aiPendingSince = Date.now();
+        if (data.deferAi) room.aiPendingSince = Math.max(Date.now(), previousPendingSince + 1);
         else { const move = choose(room.board, 'black', room.aiDifficulty); if (move) play(room, 'black', move.row, move.col); }
       }
       await this.save(room);
@@ -384,10 +394,10 @@ export class GomokuRooms {
 
     if (path === '/api/gomoku/solo/undo') {
       const room = await load(data.roomCode);
-      requirePlayer(room, data.playerId);
-      if (!isSolo(room) || !room.moveCount) return { room, success: false, message: '没有可悔的棋' };
-      const count = isAi(room.moveHistory.at(-1).player === 'black' ? room.blackPlayer : room.whitePlayer) ? 2 : 1;
-      rewind(room, count);
+      const color = requirePlayer(room, data.playerId);
+      const lastOwnMove = room.moveHistory.findLastIndex(move => move.player === color);
+      if (!isSolo(room) || lastOwnMove < 0) return { room, success: false, message: '没有可悔的棋' };
+      rewind(room, room.moveHistory.length - lastOwnMove);
       room.aiPendingSince = null;
       await this.save(room);
       return { room, success: true };
@@ -395,11 +405,11 @@ export class GomokuRooms {
     if (path === '/api/gomoku/rooms/undo-request') {
       const room = await load(data.roomCode);
       const color = requirePlayer(room, data.playerId);
-      if (!room.moveCount || room.undoRequestStatus === 'pending' || room.restartRequestStatus === 'pending' || !room.blackPlayer || !room.whitePlayer) return { room, success: false, message: '暂时不能悔棋' };
+      const count = undoCount(room, color);
+      if (room.moveCount < count || room.undoRequestStatus === 'pending' || room.restartRequestStatus === 'pending' || !room.blackPlayer || !room.whitePlayer) return { room, success: false, message: '暂时不能悔棋' };
       room.undoRequestBy = color; room.undoRequestStatus = 'pending'; room.undoRequestedAt = Date.now();
       if (isAi(room[color === 'black' ? 'whitePlayer' : 'blackPlayer'])) {
-        const lastColor = room.moveHistory.at(-1).player;
-        rewind(room, lastColor === color ? 1 : 2);
+        rewind(room, count);
         room.undoRequestBy = color; room.undoRequestStatus = 'accepted'; room.undoRequestedAt = null;
       }
       await this.save(room);
@@ -409,7 +419,7 @@ export class GomokuRooms {
       const room = await load(data.roomCode);
       const color = requirePlayer(room, data.playerId);
       if (room.undoRequestStatus !== 'pending' || room.undoRequestBy === color) return { room, success: false, message: '没有待处理的悔棋请求' };
-      if (data.accept) rewind(room, 1);
+      if (data.accept) rewind(room, undoCount(room, room.undoRequestBy));
       room.undoRequestStatus = data.accept ? 'accepted' : 'rejected'; room.undoRequestedAt = null;
       await this.save(room);
       return { room, success: true };

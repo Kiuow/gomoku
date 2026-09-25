@@ -177,11 +177,13 @@ const SoloPage: React.FC = () => {
   const highlightTimerRef = useRef<number | null>(null);
   const continuousHintRef = useRef<number | null>(null);
   const aiPollTimerRef = useRef<number | null>(null);
+  const aiPollGenerationRef = useRef(0);
   const analyzedMoveCountRef = useRef<number>(-1);
   const prevRoomRef = useRef<GomokuRoom | null>(null);
   const mountedRef = useRef(false);
   const isFetchingRef = useRef(false);
   const moveSubmittingRef = useRef(false);
+  const hintGenerationRef = useRef(0);
 
   const playerId = playerIdRef.current;
 
@@ -323,9 +325,10 @@ const SoloPage: React.FC = () => {
     if (!roomCode || !myColor) return;
 
     aiPollTimerRef.current = window.setInterval(async () => {
+      const generation = aiPollGenerationRef.current;
       try {
         const res = await gomoku.gomokuApi.getSoloRoom(roomCode);
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || generation !== aiPollGenerationRef.current) return;
         const polledRoom = res.room;
         // AI has moved when currentPlayer switches back to player's color
         // or when the game ends (AI won or draw)
@@ -476,8 +479,10 @@ const SoloPage: React.FC = () => {
   const handleCellClick = async (row: number, col: number) => {
     if (!room || !roomCode || !isMyTurn || !myColor) return;
     if (room.board[row][col]) return;
-    if (aiThinking || hintLoading || undoing || moveSubmittingRef.current) return;
+    if (aiThinking || undoing || moveSubmittingRef.current) return;
     moveSubmittingRef.current = true;
+    hintGenerationRef.current += 1;
+    setHintLoading(false);
 
     // Cancel pending auto-play — manual move takes priority
     if (autoTimerRef.current !== null) {
@@ -518,7 +523,7 @@ const SoloPage: React.FC = () => {
         if (res.aiThinking) {
           // AI is thinking in background — keep optimistic state, polling will update
           // Sync with server state in case there are any differences
-          setRoom(res.room);
+          setRoom(current => current && current.moveCount > res.room.moveCount ? current : res.room);
         } else {
           // Game ended (win/draw) — use server state directly
           setRoom(res.room);
@@ -564,8 +569,12 @@ const SoloPage: React.FC = () => {
   const handleUndo = async () => {
     if (!roomCode || !room) return;
     if (room.status !== 'playing' && room.status !== 'ended') return;
-    if (room.moveCount === 0) return;
-    if (undoing || aiThinking || hintLoading) return;
+    if (!myColor || !room.moveHistory.some(move => move.player === myColor)) return;
+    if (undoing || moveSubmittingRef.current) return;
+    const wasThinking = aiThinking;
+    aiPollGenerationRef.current += 1;
+    hintGenerationRef.current += 1;
+    setHintLoading(false);
 
     // Clear auto-play timer
     if (autoTimerRef.current !== null) {
@@ -601,9 +610,13 @@ const SoloPage: React.FC = () => {
         setRoom(res.room);
         toast.success('已悔棋');
       } else {
+        setRoom(res.room);
+        const nextColor = res.room.currentPlayer;
+        setAiThinking(res.room.status === 'playing' && (nextColor === 'black' ? res.room.blackPlayer : res.room.whitePlayer) === `ai_${nextColor}`);
         toast.error(res.message || '悔棋失败');
       }
     } catch (error: unknown) {
+      setAiThinking(wasThinking);
       logger.error('悔棋失败', error);
       toast.error('悔棋失败，请重试');
     } finally {
@@ -616,9 +629,11 @@ const SoloPage: React.FC = () => {
     if (aiThinking || hintLoading) return;
 
     analyzedMoveCountRef.current = room.moveCount;
+    const hintGeneration = ++hintGenerationRef.current;
     setHintLoading(true);
     try {
       const res = await gomoku.gomokuApi.soloAiHint({ roomCode, playerId, difficulty: room.aiDifficulty ?? undefined });
+      if (hintGeneration !== hintGenerationRef.current) return;
       if (res.valid && res.hint) {
         setHintMove(res.hint);
         setHintAnalysis(res.analysis || null);
@@ -627,10 +642,11 @@ const SoloPage: React.FC = () => {
         toast.error(res.message || '获取提示失败');
       }
     } catch (error: unknown) {
+      if (hintGeneration !== hintGenerationRef.current) return;
       logger.error('获取AI提示失败', error);
       toast.error('获取AI提示失败，请重试');
     } finally {
-      setHintLoading(false);
+      if (hintGeneration === hintGenerationRef.current) setHintLoading(false);
     }
   };
 
@@ -638,11 +654,14 @@ const SoloPage: React.FC = () => {
     if (!roomCode || !isMyTurn || !room || room.status !== 'playing') return;
     if (aiThinking) return;
 
+    hintGenerationRef.current += 1;
+    setHintLoading(false);
     setAiThinking(true);
     try {
       const res = await gomoku.gomokuApi.soloAiMove({ roomCode, playerId, difficulty: room.aiDifficulty ?? undefined });
       if (res.valid) {
-        setRoom(res.room);
+        setRoom(current => current && current.moveCount > res.room.moveCount ? current : res.room);
+        setAiThinking(!!res.aiThinking);
         // Handle opponent analysis with delay
         if (res.opponentAnalysis && showOpponentThought) {
           if (opponentTimerRef.current !== null) {
@@ -656,13 +675,14 @@ const SoloPage: React.FC = () => {
           setOpponentAnalysis(null);
         }
       } else {
+        setAiThinking(false);
         toast.error(res.message || 'AI 落子失败');
       }
     } catch (error: unknown) {
+      setAiThinking(false);
       logger.error('AI 落子失败', error);
       toast.error('AI 落子失败，请重试');
     } finally {
-      setAiThinking(false);
       if (autoTimerRef.current !== null) {
         clearTimeout(autoTimerRef.current);
         autoTimerRef.current = null;
@@ -672,6 +692,7 @@ const SoloPage: React.FC = () => {
 
   const handleRestart = async () => {
     if (!roomCode) return;
+    aiPollGenerationRef.current += 1;
     // Clear all timers
     if (autoTimerRef.current !== null) {
       clearTimeout(autoTimerRef.current);
@@ -724,10 +745,12 @@ const SoloPage: React.FC = () => {
   const handleDifficultyChange = async (newDiff: AiDifficulty) => {
     if (!room || !myColor) return;
     if (room.aiDifficulty === newDiff) return;
+    hintGenerationRef.current += 1;
+    setHintLoading(false);
     setSwitchingDifficulty(true);
     try {
       const res = await gomoku.gomokuApi.changeSoloDifficulty({ roomCode, playerId, difficulty: newDiff });
-      setRoom(res.room);
+      setRoom(current => current && current.moveCount > res.room.moveCount ? { ...current, aiDifficulty: res.room.aiDifficulty } : res.room);
       toast.success('难度已切换，当前棋局继续');
     } catch (error: unknown) {
       logger.error('切换难度失败', error);
@@ -773,7 +796,7 @@ const SoloPage: React.FC = () => {
     room &&
     (room.status === 'playing' || room.status === 'ended') &&
     myColor &&
-    room.moveCount > 0;
+    room.moveHistory.some(move => move.player === myColor);
 
   if (loading) {
     return (
@@ -949,7 +972,7 @@ const SoloPage: React.FC = () => {
             lastMove={room.lastMove}
             winningLine={room.winningLine}
             onCellClick={handleCellClick}
-            disabled={!isMyTurn || aiThinking || hintLoading || undoing}
+            disabled={!isMyTurn || aiThinking || undoing}
             currentPlayer={myColor || 'black'}
             hintMove={hintMove}
             showCoordinates={showCoordinates}
@@ -1155,7 +1178,7 @@ const SoloPage: React.FC = () => {
           <Button
             variant="outline"
             onClick={handleUndo}
-            disabled={!canUndo || undoing || aiThinking}
+            disabled={!canUndo || undoing}
             className="gap-2 min-h-11 text-base px-4 rounded-xl border-border bg-card text-foreground"
           >
             <Undo2 className="w-4 h-4" />

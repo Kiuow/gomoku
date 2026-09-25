@@ -35,6 +35,7 @@ export interface GomokuRoom {
    restartRequestBy?: PlayerColor | null;
    restartRequestStatus?: UndoRequestStatus;
    aiDifficulty: AiDifficulty | null;
+   aiPendingSince?: number | null;
  }
 
 export type RoomMode = 'normal' | 'ai';

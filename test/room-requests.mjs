@@ -46,4 +46,32 @@ pendingRestart.restartRequestedAt = Date.now() - 31000;
 values.set('room:123456', pendingRestart);
 assert.equal((await call('rooms/restart', black)).success, true, 'restart request must expire after 30 seconds');
 
+async function checkUndo(code, moves, requesterColor, expectedCount) {
+  const blackPlayer = { roomCode: code, playerId: `black-${code}` };
+  const whitePlayer = { roomCode: code, playerId: `white-${code}` };
+  await call('rooms', blackPlayer);
+  await call('rooms/join', whitePlayer);
+  for (let i = 0; i < moves; i++) {
+    await call('rooms/move', { ...(i % 2 ? whitePlayer : blackPlayer), row: 7, col: 7 + i });
+  }
+  const requester = requesterColor === 'black' ? blackPlayer : whitePlayer;
+  const responder = requesterColor === 'black' ? whitePlayer : blackPlayer;
+  assert.equal((await call('rooms/undo-request', requester)).success, true);
+  const result = await call('rooms/undo-respond', { ...responder, accept: true });
+  assert.equal(result.room.moveCount, expectedCount);
+  assert.equal(result.room.currentPlayer, requesterColor);
+}
+
+await checkUndo('234501', 1, 'black', 0); // I just moved: undo one.
+await checkUndo('234502', 2, 'black', 0); // My turn: undo both last moves.
+await checkUndo('234503', 2, 'white', 1); // Opponent's turn: undo my last move.
+await checkUndo('234504', 3, 'white', 1); // My turn: undo both last moves.
+
+const openingBlack = { roomCode: '234505', playerId: 'opening-black' };
+const openingWhite = { roomCode: '234505', playerId: 'opening-white' };
+await call('rooms', openingBlack);
+await call('rooms/join', openingWhite);
+await call('rooms/move', { ...openingBlack, row: 7, col: 7 });
+assert.equal((await call('rooms/undo-request', openingWhite)).success, false, 'white cannot undo two moves before playing');
+
 console.log('Room request checks passed');

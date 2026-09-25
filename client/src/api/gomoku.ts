@@ -94,7 +94,8 @@ async function finishSoloAiTurn(room: GomokuRoom, playerId: string): Promise<Gom
   }
   try {
     const reply = await axiosForBackend.post('/api/gomoku/solo/ai-reply', {
-      roomCode: room.roomCode, playerId, ...move,
+      roomCode: room.roomCode, playerId, expectedMoveCount: room.moveCount,
+      expectedPendingSince: room.aiPendingSince, ...move,
     });
     if (reply.data.room) return reply.data.room;
   } catch { /* The player's move was already saved; reconcile below. */ }
@@ -227,8 +228,7 @@ export const gomokuApi = {
     if (res.data.valid && room.status === 'playing') {
       const aiColor = room.currentPlayer;
       if ((aiColor === 'black' ? room.blackPlayer : room.whitePlayer) === `ai_${aiColor}`) {
-        res.data.room = await finishSoloAiTurn(room, data.playerId);
-        res.data.aiThinking = res.data.room.status === 'playing' && res.data.room.currentPlayer === aiColor;
+        void finishSoloAiTurn(room, data.playerId);
       }
     }
     return res.data;
@@ -277,7 +277,8 @@ export const gomokuApi = {
        }
      }
      const fallbackDifficulty = data.difficulty === 'hell' || data.difficulty === 'godlike' ? 'hard' : data.difficulty === 'hard' ? 'normal' : data.difficulty;
-     const res = await axiosForBackend.post('/api/gomoku/solo/ai-move', { ...data, difficulty: fallbackDifficulty });
+     const res = await axiosForBackend.post('/api/gomoku/solo/ai-move', { ...data, difficulty: fallbackDifficulty, deferAi: true });
+     if (res.data.valid && res.data.aiThinking) void finishSoloAiTurn(res.data.room, data.playerId);
      return res.data;
    },
 
