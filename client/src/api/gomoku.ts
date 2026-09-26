@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 const axiosForBackend = axios.create({ baseURL: '/' });
 import type {
    AiDifficulty,
+   AiThinkingStrength,
    GomokuRoom,
    Move,
    PlayerColor,
@@ -85,6 +86,7 @@ async function rapfiHint(room: GomokuRoom, color: PlayerColor, budget = 2000) {
 }
 
 const soloRapfiBudget = (difficulty: AiDifficulty | null) => difficulty === 'hard' ? 900 : 3000;
+const godlikeBudget: Record<AiThinkingStrength, number> = { low: 800, medium: 2000, high: 5000 };
 
 async function finishSoloAiTurn(room: GomokuRoom, playerId: string): Promise<GomokuRoom> {
   const aiColor = room.currentPlayer;
@@ -159,12 +161,12 @@ export const gomokuApi = {
       const color = room.blackPlayer === data.playerId ? 'black' : room.whitePlayer === data.playerId ? 'white' : null;
       if (color && room.currentPlayer === color) {
         let move: Move | null = null;
-        try { move = await rapfiMove(room, color); } catch { /* JS fallback below */ }
+        try { move = await rapfiMove(room, color, godlikeBudget[data.thinkingStrength ?? 'medium']); } catch { /* JS fallback below */ }
         noteOnlineRapfi(!!move);
         if (move) return this.makeMove({ ...data, ...move });
       }
     }
-    const res = await axiosForBackend.post('/api/gomoku/rooms/ai-move', data);
+    const res = await axiosForBackend.post('/api/gomoku/rooms/ai-move', { ...data, difficulty: data.difficulty === 'godlike' ? 'hard' : data.difficulty });
     return res.data;
   },
 
@@ -174,12 +176,12 @@ export const gomokuApi = {
       const color = room.blackPlayer === data.playerId ? 'black' : room.whitePlayer === data.playerId ? 'white' : null;
       if (color) {
         let result = null;
-        try { result = await rapfiHint(room, color); } catch { /* JS fallback below */ }
+        try { result = await rapfiHint(room, color, godlikeBudget[data.thinkingStrength ?? 'medium']); } catch { /* JS fallback below */ }
         noteOnlineRapfi(!!result);
         if (result) return result;
       }
     }
-    const res = await axiosForBackend.post('/api/gomoku/rooms/ai-hint', data);
+    const res = await axiosForBackend.post('/api/gomoku/rooms/ai-hint', { ...data, difficulty: data.difficulty === 'godlike' ? 'hard' : data.difficulty });
     if (res.data.valid) {
       const room = (await this.getRoom(data.roomCode)).room;
       res.data.winRate = await rapfiWinRate(room) || res.data.winRate;

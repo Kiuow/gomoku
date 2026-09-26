@@ -12,6 +12,18 @@ const call = (path, data) => rooms.route(`/api/gomoku/${path}`, 'POST', data);
 const black = { roomCode: '123456', playerId: 'black-player' };
 const white = { roomCode: '123456', playerId: 'white-player' };
 
+const sharedRoom = { roomCode: '119073', playerId: 'link-owner' };
+const sharedGuest = { roomCode: '119073', playerId: 'link-guest' };
+await call('rooms', sharedRoom);
+const joinedFromLink = await call('rooms/join', sharedGuest);
+assert.equal(joinedFromLink.playerColor, 'white', 'first visitor takes the vacant seat');
+assert.equal(joinedFromLink.room.status, 'playing');
+await assert.rejects(
+  call('rooms/join', { roomCode: '119073', playerId: 'later-visitor' }),
+  /房间状态不允许加入|房间已满/,
+  'later visitors cannot take an occupied seat',
+);
+
 await call('rooms', black);
 await call('rooms/join', white);
 await call('rooms/move', { ...black, row: 7, col: 7 });

@@ -207,7 +207,8 @@ export class GomokuRooms {
     const soloGet = /^\/api\/gomoku\/solo\/([^/]+)$/.exec(path);
     if (soloGet && method === 'GET') {
       const room = await load(decodeURIComponent(soloGet[1]));
-      if (isSolo(room) && room.status === 'playing' && room.aiPendingSince && Date.now() - room.aiPendingSince > 12000) {
+      const recoveryDelay = room.aiDifficulty === 'easy' || room.aiDifficulty === 'normal' ? 5000 : 12000;
+      if (isSolo(room) && room.status === 'playing' && room.aiPendingSince && Date.now() - room.aiPendingSince > recoveryDelay) {
         const color = room.currentPlayer;
         if (isAi(color === 'black' ? room.blackPlayer : room.whitePlayer)) {
           const fallbackDifficulty = room.aiDifficulty === 'hell' || room.aiDifficulty === 'godlike' ? 'hard' : room.aiDifficulty === 'hard' ? 'normal' : room.aiDifficulty;

@@ -12,12 +12,15 @@ import { Button } from '@client/src/components/ui/button';
 import { Switch } from '@client/src/components/ui/switch';
 import { Input } from '@client/src/components/ui/input';
 import { Lightbulb, Sparkles, TrendingUp, Lock } from 'lucide-react';
+import type { AiThinkingStrength } from '@shared/api.interface';
 
 interface HiddenAiPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tier: 'pro' | 'godlike';
   settings: { hintEnabled: boolean; autoPlayEnabled: boolean; showWinRate: boolean };
+  thinkingStrength: AiThinkingStrength;
+  onThinkingStrengthChange: (strength: AiThinkingStrength) => void;
   onHintChange: (enabled: boolean) => void;
   onAutoPlayChange: (enabled: boolean) => void;
   onWinRateChange: (enabled: boolean) => void;
@@ -37,6 +40,8 @@ export function HiddenAiPanel({
   onOpenChange,
   tier,
   settings,
+  thinkingStrength,
+  onThinkingStrengthChange,
   onHintChange,
   onAutoPlayChange,
   onWinRateChange,
@@ -147,7 +152,7 @@ export function HiddenAiPanel({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          className={`sm:max-w-md p-0 overflow-hidden rounded-2xl bg-background ${cardBorderClass}`}
+          className={`sm:max-w-md p-0 max-h-[90dvh] overflow-y-auto rounded-2xl bg-background ${cardBorderClass}`}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.92 }}
@@ -249,6 +254,29 @@ export function HiddenAiPanel({
                   style={isGodlike && showWinRate ? { backgroundColor: 'var(--ai-godlike-accent)' } : undefined}
                 />
               </div>
+
+              {isGodlike && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">思考强度</p>
+                  <div className="grid grid-cols-3 gap-2" role="group" aria-label="思考强度">
+                    {(['low', 'medium', 'high'] as const).map((strength) => (
+                      <button
+                        key={strength}
+                        type="button"
+                        aria-pressed={thinkingStrength === strength}
+                        onClick={() => onThinkingStrengthChange(strength)}
+                        className="min-h-11 rounded-xl border text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--ai-godlike-accent)]"
+                        style={thinkingStrength === strength
+                          ? { borderColor: 'var(--ai-godlike-accent)', backgroundColor: 'var(--ai-godlike-surface)', color: 'var(--ai-godlike-accent)' }
+                          : { borderColor: 'var(--border)', color: 'var(--foreground)' }}
+                      >
+                        {{ low: '低', medium: '中', high: '高' }[strength]}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">影响 AI 提示、AI 落子及全自动 AI 的思考时间</p>
+                </div>
+              )}
             </div>
 
             <DialogFooter className="pt-2">

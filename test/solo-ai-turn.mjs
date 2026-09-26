@@ -72,8 +72,25 @@ for (const difficulty of ['easy', 'normal']) {
   assert.equal(reply.valid, true);
   assert.equal(reply.room.moveCount, 2);
   assert.equal((await post('ai-reply', replyData)).valid, false, 'a duplicate AI reply must not add another stone');
+  const nextCol = reply.room.board[7][8] === null ? 8 : 9;
+  const secondMove = await post('move', { roomCode: code, playerId, row: 7, col: nextCol, deferAi: true });
+  assert.equal(secondMove.valid, true);
+  assert.equal(secondMove.room.moveCount, 3);
+  const secondReply = await post('ai-reply', {
+    roomCode: code, playerId, expectedMoveCount: secondMove.room.moveCount,
+    expectedPendingSince: secondMove.room.aiPendingSince,
+  });
+  assert.equal(secondReply.valid, true, `${difficulty} must answer the second human move`);
+  assert.equal(secondReply.room.moveCount, 4);
   const undone = await post('undo', { roomCode: code, playerId });
-  assert.equal(undone.room.moveCount, 0, 'black undo removes both the human move and AI reply');
+  assert.equal(undone.room.moveCount, 2, 'black undo removes the latest human move and AI reply');
+
+  const pending = await post('move', { roomCode: code, playerId, row: 7, col: nextCol, deferAi: true });
+  const stalePending = { ...pending.room, aiPendingSince: Date.now() - 6000 };
+  values.set(`room:${code}`, stalePending);
+  const recovered = await rooms.route(`/api/gomoku/solo/${code}`, 'GET', {});
+  assert.equal(recovered.room.moveCount, 4, `${difficulty} must recover an abandoned AI reply`);
+  assert.equal(recovered.room.aiPendingSince, null);
 }
 
 console.log('Solo AI turn checks passed');

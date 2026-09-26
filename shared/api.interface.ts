@@ -1,6 +1,7 @@
 export type PlayerColor = 'black' | 'white';
 
 export type AiDifficulty = 'easy' | 'normal' | 'hard' | 'hell' | 'godlike';
+export type AiThinkingStrength = 'low' | 'medium' | 'high';
 
 export type RoomStatus = 'waiting' | 'playing' | 'ended';
 
@@ -119,6 +120,7 @@ export interface AiMoveRequest {
   roomCode: string;
   playerId: string;
   difficulty?: AiDifficulty;
+  thinkingStrength?: AiThinkingStrength;
 }
 
 export interface AiMoveResponse {
@@ -131,6 +133,7 @@ export interface AiHintRequest {
   roomCode: string;
   playerId: string;
   difficulty?: AiDifficulty;
+  thinkingStrength?: AiThinkingStrength;
 }
 
 export interface WinRateInfo {

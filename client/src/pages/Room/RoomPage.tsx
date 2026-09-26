@@ -29,6 +29,7 @@ import type {
     MoveWithPlayer,
     AiHintAnalysis,
     AiDifficulty,
+    AiThinkingStrength,
     WatchAnalysisResponse,
     ChatMessage,
     WinRateInfo,
@@ -50,6 +51,7 @@ interface AiTierSettings {
   hintEnabled: boolean;
   autoPlayEnabled: boolean;
   showWinRate: boolean;
+  thinkingStrength?: AiThinkingStrength;
 }
 
 interface AiSettings {
@@ -60,7 +62,7 @@ interface AiSettings {
 
 const DEFAULT_AI_SETTINGS: AiSettings = {
   pro: { hintEnabled: false, autoPlayEnabled: false, showWinRate: true },
-  godlike: { hintEnabled: false, autoPlayEnabled: false, showWinRate: false },
+  godlike: { hintEnabled: false, autoPlayEnabled: false, showWinRate: false, thinkingStrength: 'medium' },
   activeTier: 'pro',
 };
 
@@ -82,7 +84,7 @@ function loadAiSettings(): AiSettings {
       const oldTier = parsed.tier === 'godlike' ? 'godlike' : 'pro';
       const migrated: AiSettings = {
         pro: { hintEnabled: oldHint, autoPlayEnabled: oldHint && oldAuto, showWinRate: oldWinRate },
-        godlike: { hintEnabled: false, autoPlayEnabled: false, showWinRate: false },
+        godlike: { hintEnabled: false, autoPlayEnabled: false, showWinRate: false, thinkingStrength: 'medium' },
         activeTier: oldTier,
       };
       saveAiSettings(migrated);
@@ -101,6 +103,9 @@ function loadAiSettings(): AiSettings {
         autoPlayEnabled: Boolean((parsed.godlike as Record<string, unknown> | undefined)?.hintEnabled)
           && Boolean((parsed.godlike as Record<string, unknown> | undefined)?.autoPlayEnabled),
         showWinRate: Boolean((parsed.godlike as Record<string, unknown> | undefined)?.showWinRate),
+        thinkingStrength: ['low', 'medium', 'high'].includes(String((parsed.godlike as Record<string, unknown> | undefined)?.thinkingStrength))
+          ? (parsed.godlike as { thinkingStrength: AiThinkingStrength }).thinkingStrength
+          : 'medium',
       },
       activeTier: parsed.activeTier === 'godlike' ? 'godlike' : 'pro',
     };
@@ -164,7 +169,8 @@ const RoomPage: React.FC = () => {
 
   // Watch mode
   const [searchParams] = useSearchParams();
-  const isWatchMode = searchParams.get('mode') === 'watch';
+  const explicitWatchMode = searchParams.get('mode') === 'watch';
+  const isWatchMode = explicitWatchMode || !!(room && room.blackPlayer !== playerIdRef.current && room.whitePlayer !== playerIdRef.current);
 
    // Watch analysis
    const [watchAnalysisData, setWatchAnalysisData] = useState<WatchAnalysisResponse | null>(null);
@@ -229,16 +235,28 @@ const RoomPage: React.FC = () => {
 
   const playerId = playerIdRef.current;
 
-   const fetchRoom = useCallback(async () => {
+   const fetchRoom = useCallback(async (autoJoin = false) => {
      if (!roomCode) return;
      if (isFetchingRoomRef.current || moveSubmittingRef.current) return;
      isFetchingRoomRef.current = true;
      const revision = roomRevisionRef.current;
      try {
        const res = await gomoku.gomokuApi.getRoom(roomCode);
+       let nextRoom = res.room;
+       if (autoJoin && !explicitWatchMode && !nextRoom.aiDifficulty
+         && nextRoom.status === 'waiting'
+         && nextRoom.blackPlayer !== playerId && nextRoom.whitePlayer !== playerId
+         && (!nextRoom.blackPlayer || !nextRoom.whitePlayer)) {
+         try {
+           nextRoom = (await gomoku.gomokuApi.joinRoom({ roomCode, playerId })).room;
+         } catch (error: unknown) {
+           logger.error('自动加入房间失败', error);
+           nextRoom = (await gomoku.gomokuApi.getRoom(roomCode)).room;
+         }
+       }
        if (!mountedRef.current || moveSubmittingRef.current || revision !== roomRevisionRef.current) return;
-       setRoom(res.room);
-       if (optimisticMoveCountRef.current >= 0 && res.room.moveCount >= optimisticMoveCountRef.current) {
+       setRoom(nextRoom);
+       if (optimisticMoveCountRef.current >= 0 && nextRoom.moveCount >= optimisticMoveCountRef.current) {
          setOptimisticBoard(null);
          setOptimisticLastMove(null);
          optimisticMoveCountRef.current = -1;
@@ -252,7 +270,7 @@ const RoomPage: React.FC = () => {
      } finally {
        isFetchingRoomRef.current = false;
      }
-   }, [roomCode]);
+   }, [roomCode, explicitWatchMode, playerId]);
 
    const fetchWinRate = useCallback(async () => {
      if (!roomCode || !effectiveAiSettings.showWinRate) return;
@@ -279,7 +297,7 @@ const RoomPage: React.FC = () => {
      let mounted = true;
      mountedRef.current = true;
      const load = async () => {
-       await fetchRoom();
+       await fetchRoom(true);
        if (mounted && mountedRef.current) setLoading(false);
      };
      load();
@@ -772,6 +790,19 @@ const RoomPage: React.FC = () => {
      }
    };
 
+   const handleThinkingStrengthChange = (thinkingStrength: AiThinkingStrength) => {
+     const newSettings: AiSettings = {
+       ...aiSettings,
+       godlike: { ...aiSettings.godlike, thinkingStrength },
+     };
+     setAiSettings(newSettings);
+     saveAiSettings(newSettings);
+     aiHintCacheRef.current = null;
+     setHintMove(null);
+     setHintAnalysis(null);
+     setHintWinRate(null);
+   };
+
    const handleUpgradeToGodlike = () => {
      const newSettings: AiSettings = {
        ...aiSettings,
@@ -787,7 +818,7 @@ const RoomPage: React.FC = () => {
    const handleDowngradeToPro = () => {
      const newSettings: AiSettings = {
        ...aiSettings,
-       godlike: { hintEnabled: false, autoPlayEnabled: false, showWinRate: false },
+       godlike: { ...aiSettings.godlike, hintEnabled: false, autoPlayEnabled: false, showWinRate: false },
        activeTier: 'pro',
      };
      setAiSettings(newSettings);
@@ -929,7 +960,7 @@ const RoomPage: React.FC = () => {
      const difficulty: AiDifficulty = godlikeActive ? 'godlike' : 'hell';
      setHintLoading(true);
      try {
-       const res = await gomoku.gomokuApi.aiHint({ roomCode, playerId, difficulty });
+       const res = await gomoku.gomokuApi.aiHint({ roomCode, playerId, difficulty, thinkingStrength: aiSettings.godlike.thinkingStrength });
         if (res.valid && res.hint) {
           setHintMove(res.hint);
           setHintAnalysis(res.analysis || null);
@@ -1060,7 +1091,7 @@ const RoomPage: React.FC = () => {
 
      setAiThinking(true);
      try {
-       const res = await gomoku.gomokuApi.aiMove({ roomCode, playerId, difficulty });
+       const res = await gomoku.gomokuApi.aiMove({ roomCode, playerId, difficulty, thinkingStrength: aiSettings.godlike.thinkingStrength });
        if (res.valid) {
          setRoom(res.room);
          setOptimisticBoard(null);
@@ -1862,6 +1893,8 @@ const RoomPage: React.FC = () => {
             onOpenChange={setShowSecretPanel}
             tier={currentTier}
             settings={aiSettings[currentTier]}
+            thinkingStrength={aiSettings.godlike.thinkingStrength ?? 'medium'}
+            onThinkingStrengthChange={handleThinkingStrengthChange}
             onHintChange={handleHintToggle}
             onAutoPlayChange={handleAutoPlayToggle}
             onWinRateChange={handleShowWinRateToggle}

@@ -1136,9 +1136,9 @@ export class GomokuAI {
 export const DIFFICULTY_CONFIGS: Record<AiDifficulty, SearchConfig> = {
   easy: {
     maxDepth: 3,
-    timeLimitMs: 1000,
+    timeLimitMs: 250,
     candidateCount: 8,
-    useVCF: true,
+    useVCF: false,
     vcfDepth: 6,
     useVCT: false,
     vctDepth: 4,
@@ -1155,9 +1155,9 @@ export const DIFFICULTY_CONFIGS: Record<AiDifficulty, SearchConfig> = {
   },
   normal: {
     maxDepth: 5,
-    timeLimitMs: 2000,
+    timeLimitMs: 700,
     candidateCount: 10,
-    useVCF: true,
+    useVCF: false,
     vcfDepth: 7,
     useVCT: false,
     vctDepth: 5,
